@@ -12,7 +12,6 @@ dist/
 *.egg-info/
 
 # Data files
-*.msg
 *.db
 
 # Results
