@@ -94,35 +94,44 @@ def select_best_keyframe_per_cell(grid, selection_method='balanced'):
         if len(keyframes_in_cell) == 0:
             continue
         
-        # 선택 방법에 따라 점수 계산
-        if selection_method == 'balanced':
-            # 방향 60% + 품질 40%
-            best_kf = max(keyframes_in_cell, 
-                         key=lambda kf: 0.6 * kf['scores']['direction'] + 
-                                       0.4 * kf['scores']['quality'])
-        elif selection_method == 'quality':
-            # 품질 우선
-            best_kf = max(keyframes_in_cell, 
-                         key=lambda kf: kf['scores']['quality'])
-        elif selection_method == 'direction':
-            # 방향 우선
-            best_kf = max(keyframes_in_cell, 
-                         key=lambda kf: kf['scores']['direction'])
-        else:
-            # 최종 점수 사용
-            best_kf = max(keyframes_in_cell, 
-                         key=lambda kf: kf['scores']['final'])
+        # 모든 후보에 대해 선택 점수 계산
+        candidates_with_scores = []
+        for kf in keyframes_in_cell:
+            if selection_method == 'balanced':
+                selection_score = 0.6 * kf['scores']['direction'] + 0.4 * kf['scores']['quality']
+            elif selection_method == 'quality':
+                selection_score = kf['scores']['quality']
+            elif selection_method == 'direction':
+                selection_score = kf['scores']['direction']
+            else:
+                selection_score = kf['scores']['final']
+            
+            candidates_with_scores.append({
+                'keyframe_id': kf['id'],
+                'position': kf['position'],
+                'scores': kf['scores'],
+                'selection_score': selection_score,
+                'num_landmarks': kf['num_landmarks']
+            })
+        
+        # 선택 점수 기준으로 정렬 (높은 순)
+        candidates_with_scores.sort(key=lambda c: c['selection_score'], reverse=True)
+        
+        # 최고 점수 키프레임 선택
+        best_kf = candidates_with_scores[0]
         
         waypoints.append({
-            'keyframe_id': best_kf['id'],
-            'position': best_kf['position'],
+            'selected_keyframe_id': best_kf['keyframe_id'],
+            'selected_position': best_kf['position'],
+            'selected_scores': best_kf['scores'],
+            'selection_score': best_kf['selection_score'],
             'grid_cell': cell_id,
             'num_candidates': len(keyframes_in_cell),
-            'scores': best_kf['scores']
+            'all_candidates': candidates_with_scores  # 모든 후보 정보 포함
         })
     
-    # 키프레임 ID 순으로 정렬
-    waypoints.sort(key=lambda w: w['keyframe_id'])
+    # 선택된 키프레임 ID 순으로 정렬
+    waypoints.sort(key=lambda w: w['selected_keyframe_id'])
     
     return waypoints
 
@@ -143,19 +152,19 @@ def calculate_waypoint_statistics(waypoints):
     # 웨이포인트 간 거리 계산
     distances = []
     for i in range(1, len(waypoints)):
-        pos1 = np.array([waypoints[i-1]['position']['x'],
-                        waypoints[i-1]['position']['y'],
-                        waypoints[i-1]['position']['z']])
-        pos2 = np.array([waypoints[i]['position']['x'],
-                        waypoints[i]['position']['y'],
-                        waypoints[i]['position']['z']])
+        pos1 = np.array([waypoints[i-1]['selected_position']['x'],
+                        waypoints[i-1]['selected_position']['y'],
+                        waypoints[i-1]['selected_position']['z']])
+        pos2 = np.array([waypoints[i]['selected_position']['x'],
+                        waypoints[i]['selected_position']['y'],
+                        waypoints[i]['selected_position']['z']])
         dist = np.linalg.norm(pos2 - pos1)
         distances.append(dist)
     
     # 점수 통계
-    direction_scores = [w['scores']['direction'] for w in waypoints]
-    quality_scores = [w['scores']['quality'] for w in waypoints]
-    final_scores = [w['scores']['final'] for w in waypoints]
+    direction_scores = [w['selected_scores']['direction'] for w in waypoints]
+    quality_scores = [w['selected_scores']['quality'] for w in waypoints]
+    final_scores = [w['selected_scores']['final'] for w in waypoints]
     
     stats = {
         'num_waypoints': len(waypoints),
@@ -190,9 +199,14 @@ def save_waypoints(waypoints, output_file, stats):
     """
     웨이포인트를 JSON 파일로 저장합니다.
     """
+    # 저장용 데이터 준비 (간결한 버전과 상세 버전 모두 포함)
     output_data = {
         'waypoints': waypoints,
-        'statistics': stats
+        'statistics': stats,
+        'summary': {
+            'total_waypoints': len(waypoints),
+            'selection_method': 'See statistics for details'
+        }
     }
     
     with open(output_file, 'w') as f:
@@ -242,17 +256,27 @@ def main():
     save_waypoints(waypoints, args.output, stats)
     
     # 7. 샘플 출력
-    print(f"\n=== 웨이포인트 샘플 (처음 10개) ===")
-    print("ID   | 위치 (x, y, z)                    | 셀 후보 | 방향   | 품질")
-    print("-----|-----------------------------------|---------|--------|--------")
-    for wp in waypoints[:10]:
-        pos = wp['position']
-        scores = wp['scores']
-        print(f"{wp['keyframe_id']:4d} | "
-              f"({pos['x']:6.2f}, {pos['y']:6.2f}, {pos['z']:6.2f}) | "
-              f"{wp['num_candidates']:7d} | "
-              f"{scores['direction']:.4f} | "
-              f"{scores['quality']:.4f}")
+    print(f"\n=== 웨이포인트 샘플 (처음 5개) ===")
+    for i, wp in enumerate(waypoints[:5]):
+        print(f"\n[웨이포인트 #{i+1}] 그리드 셀: {wp['grid_cell']}")
+        print(f"  선택된 키프레임: ID {wp['selected_keyframe_id']}")
+        print(f"  위치: ({wp['selected_position']['x']:.2f}, {wp['selected_position']['y']:.2f}, {wp['selected_position']['z']:.2f})")
+        print(f"  선택 점수: {wp['selection_score']:.4f}")
+        print(f"  후보 키프레임 개수: {wp['num_candidates']}")
+        print(f"\n  모든 후보:")
+        print(f"  ID   | 위치 (x, y, z)          | 선택점수 | 방향   | 품질   | 랜드마크")
+        print(f"  -----|---------------------------|----------|--------|--------|----------")
+        for cand in wp['all_candidates'][:10]:  # 최대 10개만 표시
+            pos = cand['position']
+            selected_marker = "*" if cand['keyframe_id'] == wp['selected_keyframe_id'] else " "
+            print(f"{selected_marker} {cand['keyframe_id']:4d} | "
+                  f"({pos['x']:5.2f},{pos['y']:5.2f},{pos['z']:5.2f}) | "
+                  f"{cand['selection_score']:8.4f} | "
+                  f"{cand['scores']['direction']:6.4f} | "
+                  f"{cand['scores']['quality']:6.4f} | "
+                  f"{cand['num_landmarks']:9d}")
+        if wp['num_candidates'] > 10:
+            print(f"  ... (나머지 {wp['num_candidates'] - 10}개 생략)")
     
     print(f"\n✓ 완료!")
 
