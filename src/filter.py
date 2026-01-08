@@ -70,7 +70,7 @@ def extract_keyframe_data(map_data):
         position = pose_wc[:3, 3]
         
         # 랜드마크 개수 (품질 평가 보조 지표)
-        num_landmarks = len(kf.get('landmark_ids', []))
+        num_landmarks = len(kf.get('lm_ids', []))
         
         keyframes.append({
             'id': kf_id,
